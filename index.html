@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Docenten Dashboard 🎓</title>
+<style>
+    body { font-family: 'Verdana', sans-serif; background-color: #f4f6f9; color: #333; padding: 20px; }
+    
+    .container { max-width: 1000px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+    
+    h1 { color: #2c3e50; border-bottom: 3px solid #0073e6; padding-bottom: 10px; }
+    
+    /* Tabel styling */
+    table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+    th, td { padding: 12px 15px; text-align: left; border-bottom: 1px solid #ddd; }
+    th { background-color: #0073e6; color: white; font-weight: bold; }
+    tr:hover { background-color: #f1f1f1; }
+    
+    /* Labels voor scores */
+    .badge { padding: 5px 10px; border-radius: 4px; font-weight: bold; font-size: 0.9em; color: white; }
+    .bg-green { background-color: #28a745; }
+    .bg-orange { background-color: #ffc107; color: #333; }
+    .bg-red { background-color: #dc3545; }
+
+    /* Login scherm */
+    #login-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: white; z-index: 9999; display: flex; flex-direction: column; justify-content: center; align-items: center; }
+    button.login-btn { background-color: #4285F4; color: white; padding: 15px 25px; border: none; font-size: 1.1em; cursor: pointer; border-radius: 5px; }
+    
+    #loading { display: none; text-align: center; color: #666; font-style: italic; margin-top: 20px;}
+    .error { color: red; font-weight: bold; padding: 10px; background: #ffe6e6; border: 1px solid red; display: none; margin-bottom: 20px;}
+</style>
+</head>
+<body>
+
+<div id="login-overlay">
+    <h2>🔒 Docenten Dashboard</h2>
+    <p>Log in met je docenten-account om de cijfers te zien.</p>
+    <button class="login-btn" onclick="inloggen()">Inloggen met Google</button>
+    <p id="no-access-msg" style="color:red; display:none; margin-top:10px;">⛔ Je hebt geen toegang met dit e-mailadres.</p>
+</div>
+
+<div class="container">
+    <h1>📊 Resultaten Overzicht</h1>
+    
+    <div id="error-msg" class="error"></div>
+    
+    <p>Hieronder zie je de resultaten van alle leerlingen.</p>
+    <button onclick="haalResultatenOp()" style="background:#6c757d; color:white; border:none; padding:10px 20px; cursor:pointer; border-radius:4px;">🔄 Verversen</button>
+
+    <div id="loading">Gegevens ophalen uit database...</div>
+
+    <table id="score-table">
+        <thead>
+            <tr>
+                <th>Datum & Tijd</th>
+                <th>Leerling</th>
+                <th>Oefening</th>
+                <th>Score</th>
+                <th>Cijfer</th>
+            </tr>
+        </thead>
+        <tbody id="table-body">
+            </tbody>
+    </table>
+</div>
+
+<script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+    import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+    import { getFirestore, collectionGroup, getDocs, query, orderBy } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+
+    // -----------------------------------------------------------
+    // ⬇️⬇️⬇️ VUL HIER JOUW GEGEVENS IN ⬇️⬇️⬇️
+    // -----------------------------------------------------------
+    
+    // 1. JOUW E-MAILADRES (Alleen jij mag dit zien!)
+    const DOCENT_EMAIL = "kevin.rotte@donboscogb.be.hier"; 
+
+    // 2. JOUW FIREBASE SLEUTEL (Dezelfde als in oefening.html)
+    const firebaseConfig = {
+
+  apiKey: "AIzaSyC0_fM3G_K00Sl8pb-CyKM7SwsnJzXonNc",
+
+  authDomain: "leerplatform-school.firebaseapp.com",
+
+  projectId: "leerplatform-school",
+
+  storageBucket: "leerplatform-school.firebasestorage.app",
+
+  messagingSenderId: "162493461908",
+
+  appId: "1:162493461908:web:650e8fbafa603bf9624b81"
+
+};
+    // -----------------------------------------------------------
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+    const provider = new GoogleAuthProvider();
+
+    // Inlog Functie
+    window.inloggen = () => {
+        signInWithPopup(auth, provider).catch(err => console.error(err));
+    }
+
+    // Check wie er is ingelogd
+    onAuthStateChanged(auth, (user) => {
+        const overlay = document.getElementById('login-overlay');
+        const errorMsg = document.getElementById('no-access-msg');
+
+        if (user) {
+            console.log("Ingelogd als:", user.email);
+            
+            // SECURITY CHECK: Ben jij het wel?
+            if (user.email.toLowerCase() === DOCENT_EMAIL.toLowerCase()) {
+                overlay.style.display = 'none'; // Verberg login scherm
+                haalResultatenOp(); // Haal direct de cijfers op
+            } else {
+                errorMsg.style.display = 'block';
+                errorMsg.innerText = `⛔ Geen toegang voor ${user.email}. Log in als docent.`;
+                // Optioneel: auth.signOut();
+            }
+        } else {
+            overlay.style.display = 'flex';
+        }
+    });
+
+    // Functie om data op te halen (Collection Group Query)
+    window.haalResultatenOp = async () => {
+        const tableBody = document.getElementById('table-body');
+        const loading = document.getElementById('loading');
+        const errorDiv = document.getElementById('error-msg');
+        
+        tableBody.innerHTML = ""; // Tabel leegmaken
+        loading.style.display = 'block';
+        errorDiv.style.display = 'none';
+
+        try {
+            // We zoeken in ALLE mappen die 'oefeningen' heten, waar ze ook staan.
+            // En we sorteren op datum (nieuwste eerst).
+            const q = query(collectionGroup(db, 'oefeningen'), orderBy('datum', 'desc'));
+            
+            const querySnapshot = await getDocs(q);
+
+            loading.style.display = 'none';
+
+            if (querySnapshot.empty) {
+                tableBody.innerHTML = "<tr><td colspan='5'>Nog geen resultaten gevonden.</td></tr>";
+                return;
+            }
+
+            querySnapshot.forEach((doc) => {
+                const data = doc.data();
+                
+                // Datum netjes maken
+                let datumString = "Onbekend";
+                if (data.datum && data.datum.seconds) {
+                    const dateObj = new Date(data.datum.seconds * 1000);
+                    datumString = dateObj.toLocaleString('nl-NL');
+                }
+
+                // Cijfer kleur bepalen
+                let badgeClass = "bg-red";
+                if (data.percentage >= 80) badgeClass = "bg-green";
+                else if (data.percentage >= 50) badgeClass = "bg-orange";
+
+                const row = `
+                    <tr>
+                        <td style="font-size:0.9em; color:#666;">${datumString}</td>
+                        <td style="font-weight:bold;">${data.leerling || data.leerlingEmail}</td>
+                        <td>${data.oefening}</td>
+                        <td>${data.score} / ${data.totaal}</td>
+                        <td><span class="badge ${badgeClass}">${data.percentage}%</span></td>
+                    </tr>
+                `;
+                tableBody.innerHTML += row;
+            });
+
+        } catch (error) {
+            console.error("Fout bij ophalen:", error);
+            loading.style.display = 'none';
+            
+            // Specifieke foutmelding als de index ontbreekt (komt soms voor bij collectionGroup)
+            if (error.message.includes("indexes")) {
+                errorDiv.innerHTML = "⚠️ <strong>Technische actie vereist:</strong><br>Omdat we door mappen zoeken, moet je éénmalig een 'index' aanmaken.<br>Open de Console (F12) van deze pagina. Daar zie je een link van Google. Klik daarop om de index automatisch aan te maken.";
+            } else {
+                errorDiv.innerHTML = "Er ging iets mis bij het ophalen: " + error.message;
+            }
+            errorDiv.style.display = 'block';
+        }
+    }
+</script>
+
+</body>
+</html>
+
